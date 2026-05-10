@@ -1,0 +1,183 @@
+import React, { useState } from 'react';
+import { Plus, Trash2, CheckSquare, Square, Wand2, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Task, SubTask } from '@/src/types';
+import { breakdownTask } from '@/src/lib/gemini';
+import { motion, AnimatePresence } from 'motion/react';
+import { cn } from '@/src/lib/utils';
+import { playClickSound, playPopSound } from '@/src/lib/audio';
+
+interface TaskManagerProps {
+  tasks: Task[];
+  setTasks: React.Dispatch<React.SetStateAction<Task[]>>;
+  nickname?: string;
+}
+
+export default function TaskManager({ tasks, setTasks, nickname }: TaskManagerProps) {
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [isBreakingDown, setIsBreakingDown] = useState(false);
+
+  const addTask = (title: string, subtasks: SubTask[] = []) => {
+    if (!title.trim()) return;
+    playClickSound();
+    const newTask: Task = {
+      id: Date.now().toString(),
+      title,
+      completed: false,
+      dueDate: new Date().toISOString(),
+      subtasks,
+    };
+    setTasks([newTask, ...tasks]);
+    setNewTaskTitle('');
+  };
+
+  const toggleTask = (taskId: string) => {
+    playPopSound();
+    setTasks(prev => {
+      return prev.map(t => t.id === taskId ? { ...t, completed: !t.completed } : t);
+    });
+    
+    // Auto-remove completed tasks after a short delay
+    setTimeout(() => {
+      setTasks(prev => prev.filter(t => !t.completed));
+    }, 1000);
+  };
+
+  const toggleSubtask = (taskId: string, subtaskId: string) => {
+    playPopSound();
+    setTasks(tasks.map(t => {
+      if (t.id === taskId && t.subtasks) {
+        const newSubtasks = t.subtasks.map(st => st.id === subtaskId ? { ...st, completed: !st.completed } : st);
+        const allCompleted = newSubtasks.every(st => st.completed);
+        return { ...t, subtasks: newSubtasks, completed: allCompleted };
+      }
+      return t;
+    }));
+  };
+
+  const removeTask = (taskId: string) => {
+    playPopSound();
+    setTasks(tasks.filter(t => t.id !== taskId));
+  };
+
+  const handleAIDivide = async () => {
+    if (!newTaskTitle.trim()) return;
+    playClickSound();
+    setIsBreakingDown(true);
+    try {
+      const result = await breakdownTask(newTaskTitle);
+      playPopSound();
+      const subtasks: SubTask[] = result.steps.map((s: any, idx: number) => ({
+        id: `${Date.now()}-${idx}`,
+        title: s.title,
+        completed: false
+      }));
+      addTask(newTaskTitle, subtasks);
+    } catch (err) {
+      console.error(err);
+      addTask(newTaskTitle);
+    } finally {
+      setIsBreakingDown(false);
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-4 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
+      <header className="flex justify-between items-center px-1">
+        <div>
+          <h2 className="text-xl md:text-3xl font-display font-extrabold text-natural-earth leading-tight">Your Progress, {nickname || 'Alex'}</h2>
+          <p className="text-[10px] md:text-sm text-text-muted italic">Big goals are just small steps in disguise.</p>
+        </div>
+      </header>
+
+      {/* Input Area */}
+      <div className="bento-card p-4 md:p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <input 
+            type="text" 
+            placeholder="Next goal? (e.g. Science Project)"
+            className="flex-1 px-4 py-3 md:px-5 md:py-4 bg-white/50 rounded-2xl border border-natural-green-muted/30 focus:border-natural-green-strong outline-none transition-all placeholder:italic placeholder:opacity-50 text-sm md:text-base"
+            value={newTaskTitle}
+            onChange={(e) => setNewTaskTitle(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addTask(newTaskTitle)}
+          />
+          <button 
+            disabled={isBreakingDown}
+            onClick={handleAIDivide}
+            className="px-5 py-3 md:py-0 bg-natural-green-muted text-natural-green-deep rounded-2xl hover:bg-natural-green-strong/20 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 font-bold text-xs"
+          >
+            {isBreakingDown ? <Loader2 className="animate-spin" size={18} /> : <Wand2 size={18} />}
+            <span>Split with AI</span>
+          </button>
+        </div>
+      </div>
+
+      {/* AI Insight Box like in the theme */}
+      <AnimatePresence>
+        {isBreakingDown && (
+          <motion.div 
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="p-4 bg-natural-yellow-muted/20 rounded-xl border border-natural-yellow-muted border-dashed"
+          >
+            <div className="text-[10px] font-bold text-natural-yellow-strong mb-2 uppercase tracking-widest">AI Insight</div>
+            <p className="text-sm italic text-natural-earth">"Breaking this down into small, digestible chunks for you..."</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Task List */}
+      <div className="space-y-4">
+        <AnimatePresence>
+          {tasks.map((task) => (
+            <motion.div 
+              key={task.id}
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className={cn(
+                "bento-card p-5 group transition-all",
+                task.completed ? "opacity-60 bg-white/30" : ""
+              )}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4 flex-1">
+                  <button onClick={() => toggleTask(task.id)} className="text-natural-green-strong hover:scale-110 transition-transform">
+                    {task.completed ? <CheckSquare size={24} className="fill-current" /> : <Square size={24} />}
+                  </button>
+                  <span className={cn("font-bold text-natural-earth text-lg", task.completed ? "line-through opacity-50" : "")}>
+                    {task.title}
+                  </span>
+                </div>
+                <button onClick={() => removeTask(task.id)} className="p-2 text-text-muted hover:text-natural-peach-strong transition-colors opacity-0 group-hover:opacity-100">
+                  <Trash2 size={18} />
+                </button>
+              </div>
+
+              {task.subtasks && task.subtasks.length > 0 && (
+                <div className="mt-4 ml-10 space-y-3 border-l-2 border-dashed border-natural-green-muted/50 pl-6">
+                  {task.subtasks.map(st => (
+                    <div key={st.id} className="flex items-center gap-3">
+                      <button onClick={() => toggleSubtask(task.id, st.id)} className="text-text-muted transition-colors">
+                        {st.completed ? <CheckSquare size={18} className="text-natural-green-strong fill-current" /> : <Square size={18} />}
+                      </button>
+                      <span className={cn("text-sm text-text-main font-medium", st.completed ? "line-through opacity-50" : "")}>
+                        {st.title}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+
+        {tasks.length === 0 && (
+          <div className="text-center py-20 bento-card border-dashed bg-transparent">
+            <p className="text-text-muted font-semibold">Everything is clear! Ready for a new challenge?</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
